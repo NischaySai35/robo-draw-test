@@ -36,7 +36,7 @@ describe('planReconfiguration', () => {
     expect(plan.steps).toHaveLength(0);
   });
 
-  it('closes an open chain into a ring with a single weld', () => {
+  it('closes an open chain into a ring with a single weld', { timeout: 30000 }, () => {
     const { assembly, modules } = chainOf(4);
     const target: WeldPair[] = [
       ...existingWelds(assembly),
@@ -63,7 +63,7 @@ describe('planReconfiguration', () => {
     expect(plan.steps[0]!.action).toBe('unweld');
   });
 
-  it('re-routes a ring through a side connector, releasing before re-attaching', () => {
+  it('re-routes a ring through a side connector, releasing before re-attaching', { timeout: 30000 }, () => {
     const { assembly, modules } = chainOf(4);
     weld(modules[3]!.connectorB, modules[0]!.connectorA);
     assembly.edges.push({ a: modules[3]!.connectorB.id, b: modules[0]!.connectorA.id });
@@ -106,7 +106,7 @@ describe('planReconfiguration', () => {
     expect(plan.steps[0]!.action).toBe('unweld');
   });
 
-  it('emits joint angles with every step, so the plan is executable', () => {
+  it('emits joint angles with every step, so the plan is executable', { timeout: 30000 }, () => {
     const { assembly, modules } = chainOf(4);
     const target: WeldPair[] = [
       ...existingWelds(assembly),
@@ -120,7 +120,7 @@ describe('planReconfiguration', () => {
     for (const angles of Object.values(step.angles)) expect(angles).toHaveLength(6);
   });
 
-  it('reports honestly instead of throwing when a target cannot be reached', () => {
+  it('reports honestly instead of throwing when a target cannot be reached', { timeout: 30000 }, () => {
     // Ask for a weld between two connectors on the same module: the chain
     // cannot fold that far onto itself within its joint limits.
     const { assembly, modules } = chainOf(2);
@@ -134,7 +134,7 @@ describe('planReconfiguration', () => {
     expect(plan.reason).toContain('operations');
   });
 
-  it('keeps the structure connected at every step of a plan it accepts', () => {
+  it('keeps the structure connected at every step of a plan it accepts', { timeout: 30000 }, () => {
     const { assembly, modules } = chainOf(4);
     weld(modules[3]!.connectorB, modules[0]!.connectorA);
     assembly.edges.push({ a: modules[3]!.connectorB.id, b: modules[0]!.connectorA.id });

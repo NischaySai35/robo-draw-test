@@ -19,14 +19,15 @@
  * angles that achieve it as a side effect. No separate sampler is needed.
  *
  * Scope note: this plans the ORDER of weld and unweld operations, verifying
- * each intermediate state is connected and geometrically achievable. It does
- * not yet plan the continuous motion between those states (the manifold-
- * constrained path), nor check self-collision or gravity. Those are the
- * remaining pieces before a plan is safe to run on hardware.
+ * each intermediate state is connected, geometrically achievable, and free of
+ * self-collision. It does not yet plan the continuous motion BETWEEN those
+ * states (the manifold-constrained path), nor check gravity and support. Those
+ * are the remaining pieces before a plan is safe to run on hardware.
  */
 import type { Assembly, ConnectorId, ModuleId } from '../types/module';
 import { allConnectors } from '../types/module';
-import { connectedComponents, findConnector } from './assemblyGraph';
+import { computeAssemblyKinematics, connectedComponents, findConnector } from './assemblyGraph';
+import { isSelfColliding } from './collision';
 import { solveLoopClosure } from './loopClosure';
 
 export type WeldPair = [ConnectorId, ConnectorId];
@@ -57,6 +58,19 @@ export interface ReconfigurationOptions {
    * floor, unless something else is holding it.
    */
   allowSplit?: boolean;
+  /**
+   * Reject any state where the robot passes through itself. On by default --
+   * a configuration the joints can reach is not necessarily one the robot can
+   * occupy. Turn it off only to see what a plan would look like unconstrained,
+   * never to make a stubborn target succeed.
+   */
+  avoidSelfCollision?: boolean;
+  /**
+   * How many differently-seeded loop solves to try before giving up on a weld.
+   * Closing a loop has many solutions and only some avoid self-collision, so a
+   * single solve says little about whether the weld is possible.
+   */
+  weldAttempts?: number;
 }
 
 /** Stable key for an undirected weld, so a pair reads the same from either side. */
@@ -101,26 +115,71 @@ function snapshotAngles(assembly: Assembly): Record<ModuleId, number[]> {
  * robot rather than a failure -- some welds this topology asks for cannot be
  * made from where it currently is.
  */
-function tryWeld(assembly: Assembly, a: ConnectorId, b: ConnectorId): { assembly: Assembly; loopError: number } | null {
-  const next = cloneAssembly(assembly);
-  const connA = findConnector(next, a);
-  const connB = findConnector(next, b);
+function tryWeld(
+  assembly: Assembly,
+  a: ConnectorId,
+  b: ConnectorId,
+  occupiable: (candidate: Assembly) => boolean,
+  attempts: number,
+): { assembly: Assembly; loopError: number } | null {
+  const welded = cloneAssembly(assembly);
+  const connA = findConnector(welded, a);
+  const connB = findConnector(welded, b);
   if (!connA || !connB || connA.locked || connB.locked) return null;
 
   connA.locked = true;
   connB.locked = true;
   connA.connectedTo = connB.id;
   connB.connectedTo = connA.id;
-  next.edges.push({ a, b });
+  welded.edges.push({ a, b });
 
-  const solved = solveLoopClosure(next, { restarts: 2, maxIterations: 80 });
-  if (solved.report.loopCount === 0) return { assembly: next, loopError: 0 };
-  if (!solved.report.converged) return null;
-
-  for (const [moduleId, angles] of solved.angles) {
-    next.modules[moduleId]!.rods.forEach((rod, i) => { rod.angle = angles[i]!; });
+  // Across components: no loop, nothing to solve, geometry follows the weld.
+  if (computeAssemblyKinematics(welded).cutEdges.length === 0) {
+    return occupiable(welded) ? { assembly: welded, loopError: 0 } : null;
   }
-  return { assembly: next, loopError: solved.report.maxPositionError };
+
+  // Within a component the weld closes a loop, and closing it is not enough:
+  // the solver will happily satisfy the constraint by coiling the structure
+  // through itself. With dozens of joints against six constraints there is
+  // enormous freedom and nothing in the residual prefers a configuration the
+  // robot can physically occupy -- a four-module ring closes perfectly while
+  // its big rods pass straight through each other.
+  //
+  // Note this canNOT be fixed by asking `solveLoopClosure` for more restarts:
+  // it only restarts while it has NOT converged, so once the first descent
+  // lands on a colliding solution the restarts never run and every retry
+  // returns the identical answer. The starting angles have to be perturbed
+  // out here, which puts each attempt in a genuinely different basin.
+  let rng = 0x9e37;
+  const random = () => {
+    rng = (rng * 1103515245 + 12345) & 0x7fffffff;
+    return rng / 0x7fffffff;
+  };
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const seedAssembly = cloneAssembly(welded);
+    if (attempt > 0) {
+      // Widen the spread as attempts go on: near misses first, then further afield.
+      const spread = attempt < attempts / 2 ? 1.5 : 3.0;
+      for (const module of Object.values(seedAssembly.modules)) {
+        for (const rod of module.rods) {
+          rod.angle = Math.min(rod.max, Math.max(rod.min, (random() - 0.5) * spread));
+        }
+      }
+    }
+
+    const solved = solveLoopClosure(seedAssembly, { restarts: 0, maxIterations: 150 });
+    if (!solved.report.converged) continue;
+
+    const candidate = cloneAssembly(welded);
+    for (const [moduleId, angles] of solved.angles) {
+      candidate.modules[moduleId]!.rods.forEach((rod, i) => { rod.angle = angles[i]!; });
+    }
+    if (occupiable(candidate)) {
+      return { assembly: candidate, loopError: solved.report.maxPositionError };
+    }
+  }
+  return null;
 }
 
 /**
@@ -133,11 +192,23 @@ function tryUnweld(assembly: Assembly, a: ConnectorId, b: ConnectorId, allowSpli
   const connB = findConnector(next, b);
   if (!connA || !connB || !connA.locked || !connB.locked) return null;
 
+  // Where everything actually IS right now. A module's `basePose` only gets
+  // read when it anchors its own component, so a module that has been carried
+  // along through welds is still carrying whatever stale pose it was created
+  // with. Break the weld without fixing that and the freed piece teleports back
+  // to that stale pose -- typically straight through whatever it just left.
+  const before = computeAssemblyKinematics(next).transforms;
+
   connA.locked = false;
   connB.locked = false;
   connA.connectedTo = null;
   connB.connectedTo = null;
   next.edges = next.edges.filter((e) => weldKey(e.a, e.b) !== weldKey(a, b));
+
+  for (const module of Object.values(next.modules)) {
+    const pose = before.get(module.id)?.connectorA;
+    if (pose) module.basePose = pose;
+  }
 
   if (!allowSplit && connectedComponents(next).length > connectedComponents(assembly).length) {
     return null;
@@ -180,6 +251,10 @@ export function planReconfiguration(
 ): ReconfigurationPlan {
   const maxExpansions = options.maxExpansions ?? 400;
   const allowSplit = options.allowSplit ?? false;
+  const avoidSelfCollision = options.avoidSelfCollision ?? true;
+  const weldAttempts = options.weldAttempts ?? 25;
+  /** A state is only usable if the robot can actually occupy it. */
+  const occupiable = (candidate: Assembly) => !avoidSelfCollision || !isSelfColliding(candidate);
 
   const startWelds = currentWelds(start);
   const targetSet = new Set(targetWelds.map(([a, b]) => weldKey(a, b)));
@@ -235,6 +310,12 @@ export function planReconfiguration(
     for (const key of toRemove) {
       if (state.removed.has(key)) continue;
       const pair = pairOf.get(key)!;
+      // No collision check here, deliberately. Releasing a weld moves nothing,
+      // so it cannot introduce a new overlap -- but it does drop the exclusion
+      // that excused the two connectors for being coincident, which they still
+      // are the instant after release. Checking would reject every unweld for
+      // an overlap that was legal one moment earlier. Separating the freed
+      // pieces is a motion, and belongs to the motion planner.
       const next = tryUnweld(state.assembly, pair[0], pair[1], allowSplit);
       if (!next) continue;
       const child: SearchState = {
@@ -257,7 +338,7 @@ export function planReconfiguration(
     for (const key of toAdd) {
       if (state.added.has(key)) continue;
       const pair = pairOf.get(key)!;
-      const welded = tryWeld(state.assembly, pair[0], pair[1]);
+      const welded = tryWeld(state.assembly, pair[0], pair[1], occupiable, weldAttempts);
       if (!welded) continue;
       const child: SearchState = {
         assembly: welded.assembly,

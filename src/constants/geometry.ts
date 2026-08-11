@@ -33,19 +33,25 @@ export const BIG_ROD_LENGTH_SCALE = 2;
  * lock faces -- the 6 faces of a cube, so a module can branch sideways instead
  * of only chaining end-to-end.
  *
- * This value is boxed in from both directions and should not be nudged
+ * This value is boxed in from three directions and should not be nudged
  * casually:
- *  - It MUST exceed `HEMISPHERE_RADIUS`. Each lock face is a flat disc of that
- *    radius standing perpendicular to its own outward direction, so at any
- *    smaller offset the +X disc reaches past the +Y disc's plane (and vice
+ *  - It MUST exceed `HEMISPHERE_RADIUS` (0.42). Each lock face is a flat disc
+ *    of that radius standing perpendicular to its own outward direction, so at
+ *    any smaller offset the +X disc reaches past the +Y disc's plane (and vice
  *    versa) and the four discs visibly slice through each other in an X.
- *  - It MUST stay under `HEMISPHERE_RADIUS + ROD_RADIUS`, or the connector's
- *    dome -- which bulges `HEMISPHERE_RADIUS` back in toward the axis -- stops
- *    reaching the rod's surface at all and the connector floats detached.
- * Adjacent domes do overlap slightly at this offset; that's intentional and
- * reads as one solid hub, since they share a material and both are solid.
+ *  - It MUST reach `2 * HEMISPHERE_RADIUS / sqrt(2)` (0.594), or two modules
+ *    welded onto ADJACENT side faces interpenetrate. Faces 90 degrees apart sit
+ *    `offset * sqrt(2)` from each other while two domes need `2 * radius` to
+ *    clear, so below this a junction can only ever use opposite faces. This one
+ *    was found by the self-collision checker, not by looking: at 0.5 the chair
+ *    came out a module heavier, with 30 colliding pairs, and its loops would
+ *    not close at all.
+ *  - It MUST stay under `HEMISPHERE_RADIUS + ROD_RADIUS` (0.62), or the
+ *    connector's dome -- which bulges `HEMISPHERE_RADIUS` back in toward the
+ *    axis -- stops reaching the rod's surface and the connector floats detached.
+ * The window is therefore narrow: 0.594 to 0.620.
  */
-export const SIDE_CONNECTOR_RADIAL_OFFSET = 0.5;
+export const SIDE_CONNECTOR_RADIAL_OFFSET = 0.6;
 
 /** Width/depth of the visible groove marking a twist rod's rotation indicator -- a subtle recessed line, not a fin. */
 export const TWIST_STRIPE_WIDTH = 0.045;

@@ -15,7 +15,8 @@
  */
 import { Vector3 } from 'three';
 import type { Assembly, ConnectorEnd, ModuleId, Pose } from '../types/module';
-import { allConnectors } from '../types/module';
+import { SIDE_CONNECTOR_ENDS, allConnectors } from '../types/module';
+import { HEMISPHERE_RADIUS, SIDE_CONNECTOR_RADIAL_OFFSET } from '../constants/geometry';
 import { computeAssemblyWorldTransforms, connectorPose } from './assemblyGraph';
 import { outwardNormal, worldPosition } from './frame';
 
@@ -29,6 +30,31 @@ import { outwardNormal, worldPosition } from './frame';
  * away.
  */
 export const MIN_ANCHOR_ALIGNMENT = 0.5;
+
+/**
+ * Side connectors 90 degrees apart cannot both carry a weld.
+ *
+ * Their faces sit `SIDE_CONNECTOR_RADIAL_OFFSET * sqrt(2)` = 0.707 apart while
+ * two connector domes need 0.840 to clear -- so modules plugged into adjacent
+ * faces of the same hub interpenetrate by 0.133. Opposite faces are a full
+ * 1.0 apart and are fine. Rather than forbid branching, this steers each
+ * junction toward opposite pairs, which is free; the alternative is raising
+ * the offset into the 0.594-0.620 window, where the dome barely reaches its
+ * own rod. Either way a module supports at most TWO side welds, and they must
+ * be opposite each other.
+ */
+const ADJACENT_SIDE_FACES_CLASH =
+  SIDE_CONNECTOR_RADIAL_OFFSET * Math.SQRT2 < 2 * HEMISPHERE_RADIUS;
+
+function adjacentSideEnds(end: ConnectorEnd): ConnectorEnd[] {
+  if (!ADJACENT_SIDE_FACES_CLASH) return [];
+  const index = SIDE_CONNECTOR_ENDS.indexOf(end as never);
+  if (index < 0) return [];
+  return [
+    SIDE_CONNECTOR_ENDS[(index + 1) % SIDE_CONNECTOR_ENDS.length]!,
+    SIDE_CONNECTOR_ENDS[(index + 3) % SIDE_CONNECTOR_ENDS.length]!,
+  ];
+}
 
 export interface AnchorCandidateKey {
   /** Identifies which already-fitted chain the connector belongs to. */
@@ -91,6 +117,12 @@ export function findWeldAnchor(
         if (connector.locked) continue;
         const key: AnchorCandidateKey = { chainKey: chain.chainKey, moduleIndex, end: connector.end };
         if (consumed.has(candidateId(key))) continue;
+        // Taking a side connector next to one already in use would have the two
+        // welded modules interpenetrate -- see `adjacentSideEnds`.
+        const clashes = adjacentSideEnds(connector.end).some((neighbour) =>
+          consumed.has(candidateId({ ...key, end: neighbour })),
+        );
+        if (clashes) continue;
 
         const pose = connectorPose(moduleTransforms, connector.end);
         if (outwardNormal(pose).dot(direction) < MIN_ANCHOR_ALIGNMENT) continue;
