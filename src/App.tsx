@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { ModelEditor } from './scene/ModelEditor';
 import { DrawModeEditor } from './scene/DrawModeEditor';
 import { VoxelModeEditor } from './scene/VoxelModeEditor';
+import { GenerateModeEditor } from './scene/GenerateModeEditor';
 import { Toolbar } from './ui/Toolbar';
 import { Outliner } from './ui/Outliner';
 import { Inspector } from './ui/Inspector';
@@ -10,6 +11,7 @@ import { DrawSettingsPanel } from './ui/DrawSettingsPanel';
 import { DrawStatusPanel } from './ui/DrawStatusPanel';
 import { VoxelSettingsPanel } from './ui/VoxelSettingsPanel';
 import { VoxelInspector } from './ui/VoxelInspector';
+import { GeneratePanel } from './ui/GeneratePanel';
 import { ToastList } from './ui/ToastList';
 import { ConfirmDialogHost } from './ui/ConfirmDialogHost';
 import { ContextMenu, type ContextMenuItem } from './ui/ContextMenu';
@@ -91,6 +93,7 @@ export default function App() {
           {mode === 'manual' && <Outliner />}
           {mode === 'draw' && <DrawSettingsPanel />}
           {mode === 'cube' && <VoxelSettingsPanel />}
+          {mode === 'generate' && <GeneratePanel />}
         </aside>
         <main
           className="app__viewport"
@@ -103,6 +106,7 @@ export default function App() {
           {mode === 'manual' && <ModelEditor />}
           {mode === 'draw' && <DrawModeEditor />}
           {mode === 'cube' && <VoxelModeEditor />}
+          {mode === 'generate' && <GenerateModeEditor />}
           {mode === 'manual' && viewportMenu && (
             <ContextMenu
               x={viewportMenu.x}

@@ -509,3 +509,238 @@ button {
   grid-template-columns: repeat(3, 1fr);
   gap: 4px;
 }
+
+/* --------------------------------------------------------------------------
+   Prompt-to-build tab
+   -------------------------------------------------------------------------- */
+
+.gen-panel {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  height: 100%;
+}
+
+.gen-panel__prompt {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  font: inherit;
+  font-size: 13px;
+  padding: 8px;
+  border-radius: 4px;
+  border: 1px solid #2f3947;
+  background: #141a22;
+  color: #e6ebf2;
+}
+
+.gen-panel__examples {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.gen-chip {
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 10px;
+  border: 1px solid #2f3947;
+  background: #1a212b;
+  color: #9fb0c4;
+  cursor: pointer;
+}
+
+.gen-chip:hover:not(:disabled) {
+  border-color: #4a7bd5;
+  color: #cfe0f5;
+}
+
+.gen-panel__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.gen-panel__run {
+  flex: 1;
+  padding: 7px 10px;
+  border-radius: 4px;
+  border: 1px solid #2f3947;
+  background: #202a36;
+  color: #e6ebf2;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.gen-panel__run--go {
+  background: #2f6fd0;
+  border-color: #3a7bd5;
+}
+
+.gen-panel__run:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.gen-panel__hint {
+  font-size: 10px;
+  color: #6d7c8e;
+}
+
+.gen-panel__note {
+  margin: 6px 0 0;
+  font-size: 10px;
+  line-height: 1.45;
+  color: #7d8b9c;
+}
+
+.gen-panel__note code {
+  color: #9fb0c4;
+}
+
+.gen-panel__disclosure {
+  margin-top: 8px;
+  align-self: flex-start;
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 11px;
+  color: #6f9bd8;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.gen-panel__reasoning {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #b9c6d6;
+  font-style: italic;
+}
+
+/* Pipeline stages */
+
+.gen-stages {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.gen-stage {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  align-items: baseline;
+}
+
+.gen-stage__glyph {
+  width: 16px;
+  flex: none;
+  text-align: center;
+  font-size: 10px;
+  color: #56637a;
+}
+
+.gen-stage--running .gen-stage__glyph { color: #f0c674; }
+.gen-stage--done .gen-stage__glyph { color: #33d17a; }
+.gen-stage--warned .gen-stage__glyph { color: #e8b339; }
+.gen-stage--failed .gen-stage__glyph { color: #ff6b6e; }
+
+.gen-stage__body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.gen-stage__label {
+  color: #9aa8ba;
+}
+
+.gen-stage--running .gen-stage__label,
+.gen-stage--done .gen-stage__label { color: #dbe4ef; }
+
+.gen-stage__ms {
+  margin-left: 6px;
+  font-style: normal;
+  font-size: 10px;
+  color: #6d7c8e;
+}
+
+.gen-stage__detail {
+  font-size: 11px;
+  color: #7d8b9c;
+  word-break: break-word;
+}
+
+.gen-stage--failed .gen-stage__detail { color: #ff9a9d; }
+
+/* Metrics grid */
+
+.gen-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 4px 10px;
+  margin-top: 8px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: #dbe4ef;
+}
+
+.gen-metrics--wide {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.gen-metrics em {
+  display: block;
+  font-style: normal;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #6d7c8e;
+}
+
+/* Raw stream */
+
+.gen-stream {
+  margin: 0;
+  max-height: 190px;
+  overflow: auto;
+  padding: 8px;
+  border-radius: 4px;
+  background: #0e131a;
+  border: 1px solid #232c38;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: #8fbf9f;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.gen-stream__caret {
+  animation: gen-blink 1s steps(2, start) infinite;
+  color: #33d17a;
+}
+
+@keyframes gen-blink {
+  to { visibility: hidden; }
+}
+
+.gen-repairs {
+  margin: 0;
+  padding-left: 16px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #b0a27d;
+}
+
+.status-line--error {
+  background: #2b1d1e;
+  color: #ff9a9d;
+}

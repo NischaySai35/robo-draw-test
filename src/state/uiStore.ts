@@ -25,7 +25,7 @@ export interface ChoiceRequest {
   resolve: (value: string | null) => void;
 }
 
-export type AppMode = 'manual' | 'draw' | 'cube';
+export type AppMode = 'manual' | 'draw' | 'cube' | 'generate';
 
 interface UIState {
   warnings: Warning[];

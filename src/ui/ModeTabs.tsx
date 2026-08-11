@@ -16,6 +16,9 @@ export function ModeTabs() {
       <button className={`mode-tab${mode === 'cube' ? ' mode-tab--active' : ''}`} onClick={() => setMode('cube')}>
         Cube Builder
       </button>
+      <button className={`mode-tab${mode === 'generate' ? ' mode-tab--active' : ''}`} onClick={() => setMode('generate')}>
+        Prompt to Build
+      </button>
     </div>
   );
 }
