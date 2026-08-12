@@ -33,6 +33,13 @@ export default defineConfig(({ mode }) => {
             })
           },
         },
+        // Ollama needs no key at all -- this exists purely to dodge the
+        // browser's CORS preflight against a bare localhost port.
+        '/api/ollama': {
+          target: 'http://127.0.0.1:11434',
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/api\/ollama/, ''),
+        },
       },
     },
   }

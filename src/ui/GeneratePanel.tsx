@@ -15,7 +15,8 @@ import { useGenerateStore, type Stage } from '../state/generateStore';
 import { useAssemblyStore } from '../state/assemblyStore';
 import { useUIStore } from '../state/uiStore';
 import { hasApiKey, setApiKey } from '../ai/anthropicProvider';
-import { AVAILABLE_MODELS, type ProviderId } from '../ai/provider';
+import { listOllamaModels } from '../ai/ollamaProvider';
+import { AVAILABLE_MODELS, OLLAMA_MODELS, type ProviderId } from '../ai/provider';
 
 const KEY_STORAGE = 'modulink.anthropicKey';
 
@@ -52,6 +53,20 @@ export function GeneratePanel() {
   const [keyInput, setKeyInput] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
   const streamRef = useRef<HTMLPreElement | null>(null);
+  // What Ollama actually has pulled, so a stale model picker doesn't send a
+  // request that can only ever 404.
+  const [pulledModels, setPulledModels] = useState<string[] | null>(null);
+
+  useEffect(() => {
+    if (store.providerId !== 'ollama') return;
+    let cancelled = false;
+    listOllamaModels().then((names) => {
+      if (!cancelled) setPulledModels(names);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [store.providerId, store.running]);
 
   // Restore a previously pasted key. Kept in localStorage only when the user
   // pastes one -- the proxy path never puts a key in the browser at all.
@@ -132,9 +147,46 @@ export function GeneratePanel() {
             onChange={(e) => store.setProvider(e.target.value as ProviderId)}
           >
             <option value="anthropic">Anthropic API</option>
+            <option value="ollama">Local (Ollama)</option>
             <option value="template">Local templates (no AI)</option>
           </select>
         </label>
+
+        {store.providerId === 'ollama' && (
+          <>
+            <label className="field">
+              <span>Model</span>
+              <select value={store.model} disabled={store.running} onChange={(e) => store.setModel(e.target.value)}>
+                {OLLAMA_MODELS.map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {model.label}
+                    {pulledModels !== null && !pulledModels.some((n) => n === model.id || n.startsWith(`${model.id}-`))
+                      ? ' (not pulled)'
+                      : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {pulledModels !== null && pulledModels.length === 0 && (
+              <p className="gen-panel__note">
+                Ollama has no models pulled yet. In a terminal: <code>ollama pull {store.model}</code>. This runs
+                entirely on your CPU (no GPU detected) -- a 1-3B model, so expect real but slow thinking, not
+                instant answers.
+              </p>
+            )}
+            {pulledModels === null && (
+              <p className="gen-panel__note">
+                Checking <code>localhost:11434</code>... if this doesn't clear, run <code>ollama serve</code>.
+              </p>
+            )}
+            <p className="gen-panel__note">
+              Kept light on purpose, for this machine: 2K-token context (not the model's 32K default), capped to{' '}
+              {Math.max(1, (typeof navigator !== 'undefined' ? navigator.hardwareConcurrency || 4 : 4) - 2)} CPU
+              threads, unloaded from RAM ~5s after each reply, and only ever one request in flight -- switching
+              models mid-run isn't possible, and won't hold two resident at once.
+            </p>
+          </>
+        )}
 
         {store.providerId === 'anthropic' && (
           <>

@@ -16,10 +16,11 @@
  */
 import { create } from 'zustand';
 import { anthropicProvider } from '../ai/anthropicProvider';
+import { ollamaProvider } from '../ai/ollamaProvider';
 import { templateProvider } from '../ai/templateProvider';
 import { extractJson, normalizeShape } from '../ai/normalizeShape';
 import { SHAPE_SYSTEM_PROMPT, buildUserPrompt } from '../ai/prompt';
-import { DEFAULT_MODEL, type GenerationMetrics, type ProviderId, type ShapeProvider } from '../ai/provider';
+import { DEFAULT_MODEL, DEFAULT_OLLAMA_MODEL, type GenerationMetrics, type ProviderId, type ShapeProvider } from '../ai/provider';
 import { fitSkeleton, type ShapeSpec, type SkeletonFitResult } from '../kinematics/skeletonFit';
 import { checkSelfCollision } from '../kinematics/collision';
 
@@ -58,6 +59,7 @@ const STAGE_TEMPLATE: Stage[] = [
 
 const PROVIDERS: Record<ProviderId, ShapeProvider> = {
   anthropic: anthropicProvider,
+  ollama: ollamaProvider,
   template: templateProvider,
 };
 
@@ -134,7 +136,18 @@ export const useGenerateStore = create<GenerateState>((set, get) => {
     revision: 0,
 
     setRequest: (value) => set({ request: value }),
-    setProvider: (id) => set({ providerId: id }),
+    setProvider: (id) =>
+      set((state) => ({
+        providerId: id,
+        // An Anthropic model id sent to Ollama (or vice versa) is just a 404.
+        model: id === 'ollama' ? DEFAULT_OLLAMA_MODEL : DEFAULT_MODEL,
+        // Ollama's default token budget is deliberately smaller: this is a
+        // CPU laptop, and a chair's JSON needs a few hundred tokens, not the
+        // thousands a hosted model can afford to burn per second. Only reset
+        // it on the way IN to local, so a value the user tuned by hand isn't
+        // silently overwritten switching back and forth.
+        maxTokens: id === 'ollama' && state.providerId !== 'ollama' ? 1200 : state.maxTokens,
+      })),
     setModel: (model) => set({ model }),
     setMaxTokens: (value) => set({ maxTokens: Math.max(256, Math.min(16000, Math.round(value))) }),
     setTemperature: (value) => set({ temperature: Math.max(0, Math.min(1, value)) }),

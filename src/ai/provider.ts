@@ -9,7 +9,7 @@
  * Time-to-first-token and tokens/sec are measured separately because they fail
  * separately: a slow first token is the network, a slow rate is the model.
  */
-export type ProviderId = 'anthropic' | 'template';
+export type ProviderId = 'anthropic' | 'ollama' | 'template';
 
 export interface GenerationMetrics {
   /** ms from request start to the first content token. Network + queue + prefill. */
@@ -62,3 +62,19 @@ export const AVAILABLE_MODELS = [
 ] as const;
 
 export const DEFAULT_MODEL = 'claude-sonnet-5';
+
+/**
+ * Small local models worth pulling for this job: the whole point of the local
+ * path is finding out whether something this size can hold the wireframe
+ * rule and the JSON shape at once. Picked for a 1B-3B spread with strong
+ * instruction-following at that size, on Ollama's registry by default so a
+ * plain `ollama pull <name>` works with no extra flags.
+ */
+export const OLLAMA_MODELS = [
+  { id: 'llama3.2:1b', label: 'Llama 3.2 1B -- fastest, weakest reasoning' },
+  { id: 'qwen2.5:1.5b', label: 'Qwen 2.5 1.5B -- fast, decent structure' },
+  { id: 'llama3.2:3b', label: 'Llama 3.2 3B -- balanced' },
+  { id: 'qwen2.5:3b', label: 'Qwen 2.5 3B -- strongest of this size' },
+] as const;
+
+export const DEFAULT_OLLAMA_MODEL = 'qwen2.5:3b';
