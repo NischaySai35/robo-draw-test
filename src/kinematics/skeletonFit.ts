@@ -22,9 +22,22 @@
  *  3. Fit each path, anchoring branches onto free connectors of already-placed
  *     chains -- usually the ones riding a big rod, which is what lets three or
  *     more beams meet at one junction at all.
- *  4. Close the loops. A skeleton with cycles (a seat frame, a ladder) leaves
- *     welds the spanning tree cannot satisfy; `solveLoopClosure` finishes the
- *     job or reports honestly that this shape is unreachable.
+ *  4. Close the loops AND pull the whole structure back onto the skeleton.
+ *     A shape with cycles (a seat frame, a ladder) leaves welds the spanning
+ *     tree cannot satisfy, and `solveConstrained` closes them -- but it is
+ *     also given every skeleton node as a goal for the chain tip that should
+ *     reach it.
+ *
+ * Step 4's goals are what make this a fit of the whole shape rather than a
+ * sequence of independent guesses. Steps 1-3 are greedy and one-directional:
+ * each chain is fitted once, starting from a connector that already sits off
+ * the junction it stands for, and is never reconsidered. Error therefore does
+ * not merely persist, it compounds outward -- each branch inherits its host's
+ * offset and adds its own. Nothing in steps 1-3 ever looks at the assembled
+ * result, which is why a generated shape could come out visibly wrong while
+ * every individual chain honestly reported a small residual: each residual
+ * was measured against that chain's own drifted starting point, not against
+ * the design. Step 4 is the only pass that sees the whole structure at once.
  */
 import { Vector3 } from 'three';
 import type { Assembly, Connector, ConnectorEnd, ModuleId, Pose } from '../types/module';
@@ -33,11 +46,11 @@ import type { Stroke } from '../types/draw';
 import {
   buildFittedChain,
   computeChainStartPoseFromStroke,
-  computeFeasibility,
+  idealModuleCount,
   strokeArcLength,
 } from './curveFit';
 import { anchorKeyId, findWeldAnchor } from './branchAnchor';
-import { solveLoopClosure, type LoopClosureReport } from './loopClosure';
+import { solveConstrained, type ConnectorGoal, type LoopClosureReport } from './loopClosure';
 
 export interface SkeletonNode {
   id: string;
@@ -87,8 +100,46 @@ export interface SkeletonFitOptions {
   tolerance?: number;
   /** Restarts for the final loop-closure solve. */
   loopRestarts?: number;
+  /** Descent steps for the weld-polishing solve -- see `POLISH_ITERATIONS`. */
   loopIterations?: number;
+  /** Descent steps for the shaping solve -- see `SHAPE_ITERATIONS`. */
+  shapeIterations?: number;
 }
+
+/**
+ * Descent steps for the two closing solves (see the end of `fitSkeleton`).
+ *
+ * Both are capped low on purpose. Neither solve can ever reach the solver's
+ * own stopping tolerance, because the goal rows keep the residual norm well
+ * above it no matter how good the answer gets -- a goal that is as close as
+ * the structure allows still contributes. So without a cap, every solve runs
+ * its full budget every time.
+ *
+ * These numbers are where measured quality stops improving: raising the shape
+ * pass from 10 to 150 moved the mean tip error of a generated chair from
+ * 0.808 to 0.806 and took 3x as long; the polish likewise flattens by 40,
+ * holding welds at ~1e-7 against a 1e-5 tolerance.
+ */
+const SHAPE_ITERATIONS = 10;
+const POLISH_ITERATIONS = 40;
+
+/** Extra polish rounds allowed, each double the last -- see the escalation loop. */
+const POLISH_MAX_ESCALATIONS = 2;
+/**
+ * A polish round must cut the worst weld error to at least this fraction of
+ * what it was, or escalating again is judged not worth the time. Loose on
+ * purpose: the point is to tell "still descending" apart from "stalled", not
+ * to demand a particular rate.
+ */
+const POLISH_PROGRESS_FACTOR = 0.9;
+
+/**
+ * How far the goals are turned down for the polish pass -- see the two-stage
+ * comment in `fitSkeleton`. Loops already outrank goals 100:1 inside the
+ * solver (`LOOP_WEIGHT`), so this puts welds 1e4 ahead: enough that goals
+ * cannot measurably disturb a weld, while still steering the polish.
+ */
+const POLISH_GOAL_WEIGHT = 0.01;
 
 function edgeKey(a: string, b: string): string {
   return a < b ? `${a}|${b}` : `${b}|${a}`;
@@ -304,6 +355,22 @@ export function fitSkeleton(spec: ShapeSpec, options: SkeletonFitOptions = {}): 
         // `buildFittedChain` wants a chain-FORWARD frame and applies the weld
         // flip itself; the host connector already faces the way this arm runs.
         chainStartPose = anchor.pose;
+
+        // A branch connector rides partway down its host's own rod, so it is
+        // never exactly AT the junction node it stands in for -- this chain
+        // starts a real distance from where its path nominally begins, and
+        // the fit has to absorb that gap. It is corrected globally rather than
+        // here: every node this path is meant to hit is handed to the closing
+        // solve below as a goal, which pulls the whole structure back onto the
+        // design once all of it exists.
+        //
+        // Re-basing the path's remaining points by the anchor's own offset
+        // instead was tried and is not worth it. It cannot touch the last node
+        // (that one is either a shared corner a weld must reconcile, or a leaf
+        // the goals target -- shifting it just sets the fit against the pass
+        // meant to correct it, which measurably broke both). That leaves only
+        // a multi-beam path's interior, and paths here are overwhelmingly
+        // single beams, so it changed nothing on any shape measured.
         points = [anchor.pose.position, ...centers.slice(1)];
         anchorConnector = connectorByEnd(assembly.modules[anchor.moduleId]!, anchor.end);
         anchoredTo = { moduleId: anchor.moduleId, end: anchor.end };
@@ -315,7 +382,7 @@ export function fitSkeleton(spec: ShapeSpec, options: SkeletonFitOptions = {}): 
 
     const stroke: Stroke = { id: nodeIds.join('>'), points };
     const length = strokeArcLength(points.map((p) => new Vector3(...p)));
-    const moduleCount = Math.max(1, computeFeasibility(length, 0).modulesNeeded);
+    const moduleCount = idealModuleCount(length, points.length);
     const { assembly: chainAssembly, fitResult } = buildFittedChain(
       stroke,
       moduleCount,
@@ -345,7 +412,7 @@ export function fitSkeleton(spec: ShapeSpec, options: SkeletonFitOptions = {}): 
   // frame came out as four beams that merely looked joined, and a ring never
   // met itself at all. Here each chain that ends on a shared node reaches for a
   // free connector there and welds to it. These are precisely the welds that
-  // create the kinematic loops, which `solveLoopClosure` then has to satisfy.
+  // create the kinematic loops, which the closing solve then has to satisfy.
   for (const chain of chains) {
     const lastNode = chain.nodeIds[chain.nodeIds.length - 1]!;
     if (!canWeldAt(lastNode)) continue;
@@ -357,11 +424,13 @@ export function fitSkeleton(spec: ShapeSpec, options: SkeletonFitOptions = {}): 
     // A partner here must face back down the beam we arrived on, opposing our
     // own outward normal -- that is what "welded" means geometrically.
     const inbound = new Vector3(...positions.get(chain.nodeIds[chain.nodeIds.length - 2]!)!).sub(junction);
-    const anchor = findWeldAnchor([{ chainKey: 'built', assembly }], junction, inbound, consumed);
+    // Excluding `lastModule` covers welding a connector to itself as well as
+    // to any of its own siblings -- both are welds within one rigid body, and
+    // neither can ever close. See `findWeldAnchor`.
+    const anchor = findWeldAnchor([{ chainKey: 'built', assembly }], junction, inbound, consumed, lastModule.id);
     if (!anchor) continue;
 
     const partner = connectorByEnd(assembly.modules[anchor.moduleId]!, anchor.end);
-    if (partner.id === lastModule.connectorB.id) continue; // never weld a connector to itself
     weld(partner, lastModule.connectorB, assembly);
     consumed.add(anchorKeyId(anchor));
     recordWeldAt(lastNode);
@@ -370,24 +439,132 @@ export function fitSkeleton(spec: ShapeSpec, options: SkeletonFitOptions = {}): 
   // Junctions and rings leave welds the spanning tree cannot satisfy. Solving
   // them is what makes a seat frame or a ladder an actual closed structure
   // rather than a set of beams that merely look joined.
-  let loopReport: LoopClosureReport | null = null;
-  // No restarts by default: fitting each chain to the skeleton already lands
-  // very close to a consistent configuration, so the warm start is excellent
-  // and a random restart would throw it away for a far worse guess.
-  const solved = solveLoopClosure(assembly, {
-    restarts: options.loopRestarts ?? 0,
-    maxIterations: options.loopIterations ?? 150,
-  });
-  if (solved.report.loopCount > 0) {
-    loopReport = solved.report;
-    if (solved.report.converged) {
-      for (const [moduleId, angles] of solved.angles) {
-        assembly.modules[moduleId]!.rods.forEach((rod, i) => {
-          rod.angle = angles[i]!;
-        });
-      }
-    }
+  //
+  // That solve is also handed a GOAL for every chain's far tip: pull it back
+  // to the skeleton node it was meant to reach. This is what makes the fit
+  // GLOBAL instead of greedy. Up to here each chain is fitted once, in
+  // isolation, starting from a connector that already sits off its junction
+  // -- so error does not just persist, it compounds outward, every branch
+  // inheriting its host's offset and adding its own, with nothing that ever
+  // looks at the finished structure as a whole. That is what made a generated
+  // shape come out recognisably wrong while every individual chain reported a
+  // small residual: the residuals were measured against drifted starting
+  // points, not against the design. Measured on a generated chair, tips
+  // landed a mean of 3.5 world units from their nodes -- on beams 3 units
+  // long -- before this pass; 0.8 after.
+  //
+  // The machinery is already here: loop closure runs a whole-assembly IK
+  // descent over every joint. Goals simply give the joints that no weld pins
+  // down something to move toward, instead of leaving them wherever the
+  // one-shot forward fit happened to stop. `LOOP_WEIGHT` keeps welds
+  // non-negotiable, so a goal can straighten a chain but never pull apart two
+  // connectors that must physically meet.
+  //
+  // At most ONE goal per skeleton node. Several chains can end on the same
+  // corner, and giving each its own row toward that corner does not reinforce
+  // the target -- the rows sit on different connectors, each pulling along its
+  // own Jacobian direction, so they fight each other and the weld already
+  // holding them together. One representative tip states it once and lets the
+  // weld carry the rest.
+  const goalNodes = new Set<string>();
+  const goals: ConnectorGoal[] = [];
+  for (const chain of chains) {
+    const tipNode = chain.nodeIds[chain.nodeIds.length - 1]!;
+    if (goalNodes.has(tipNode)) continue;
+    goalNodes.add(tipNode);
+    goals.push({
+      moduleId: chain.moduleIds[chain.moduleIds.length - 1]!,
+      end: 'B',
+      target: { position: positions.get(tipNode)!, quaternion: [0, 0, 0, 1] },
+      positionOnly: true,
+    });
   }
+
+  const solveOptions = {
+    // No restarts by default: fitting each chain to the skeleton already lands
+    // very close to a consistent configuration, so the warm start is excellent
+    // and a random restart would throw it away for a far worse guess.
+    restarts: options.loopRestarts ?? 0,
+    maxIterations: options.loopIterations ?? POLISH_ITERATIONS,
+  };
+
+  // Applied unconditionally, where this used to keep the solved angles only if
+  // the loops converged. A descent only ever accepts a step that lowers its
+  // residual, so its angles hold the welds at least as well as the forward
+  // fit's did -- discarding them on failure threw away the best configuration
+  // found and kept a strictly worse one. `converged` still reports honestly
+  // whether the welds actually hold; that is information for the caller, not a
+  // reason to return worse angles.
+  const applyAngles = (angles: Map<ModuleId, number[]>) => {
+    for (const [moduleId, solvedAngles] of angles) {
+      assembly.modules[moduleId]!.rods.forEach((rod, i) => {
+        rod.angle = solvedAngles[i]!;
+      });
+    }
+  };
+
+  // Two stages, because the two jobs want different things from the same
+  // descent. Goals pull the structure onto the design; welds must hold
+  // exactly. Run together at full strength the goal rows keep nudging at the
+  // equilibrium and the welds settle around 2e-4 -- visually fine, but an
+  // order of magnitude short of the tolerance that makes `converged` mean
+  // anything, and a weld that "nearly" holds is the one thing this solver
+  // must not report loosely.
+  //
+  // So: shape first, then polish. Stage 2 warm starts from stage 1's angles
+  // and drives the welds to machine precision.
+  //
+  // The polish keeps the goals, at a fraction of their weight. Dropping them
+  // entirely is the obvious thing and it is wrong: closing the loops leaves
+  // most of the assembly's joints free (mobility is 40-odd DOF here), so a
+  // loops-only descent is free to wander anywhere in that nullspace on its
+  // way to a tighter weld -- and it does, undoing the shape it was handed.
+  // Measured on the template chair, a goal-free polish threw away nearly the
+  // whole gain, mean tip error 0.81 -> 3.72, worse than not having shaped it
+  // at all. Held at low weight the goals cannot fight the welds (already 100x
+  // via LOOP_WEIGHT, so 1e4x here) but they still pin down which of the many
+  // weld-satisfying configurations the polish settles into: the one that
+  // still looks like the thing that was asked for.
+  const polishGoals = goals.map((goal) => ({ ...goal, weight: POLISH_GOAL_WEIGHT }));
+  applyAngles(
+    solveConstrained(assembly, goals, {
+      ...solveOptions,
+      maxIterations: options.shapeIterations ?? SHAPE_ITERATIONS,
+    }).angles,
+  );
+
+  // The polish runs in escalating rounds rather than one fixed budget, because
+  // no single budget is right. Each round warm starts from the last (the
+  // angles are applied as we go), so rounds continue the same descent rather
+  // than repeating it.
+  //
+  // A budget has to be chosen blind here: the solver's own early exit cannot
+  // fire, since the goal rows hold the total residual far above its stopping
+  // tolerance however good the welds get. Shapes vary by more than an order of
+  // magnitude in what they need -- most close inside 40 steps, while a table
+  // whose beams are all exactly equal was still at 1e-4 there and needed 80 to
+  // reach 1e-8. Picking one number either abandons that table just short of a
+  // solution it was about to find, or makes every easy shape pay for the
+  // hardest one.
+  //
+  // So: stop as soon as the welds hold, and otherwise keep going only while
+  // the extra round is actually buying something. That last condition is what
+  // keeps a genuinely unbuildable shape cheap -- an over-constrained structure
+  // stalls at the same error no matter how long it is given, and there is
+  // nothing to gain by giving it more.
+  let solved = solveConstrained(assembly, polishGoals, solveOptions);
+  applyAngles(solved.angles);
+  for (let round = 1; round <= POLISH_MAX_ESCALATIONS && !solved.report.converged; round += 1) {
+    const previousError = solved.report.maxPositionError;
+    solved = solveConstrained(assembly, polishGoals, {
+      ...solveOptions,
+      maxIterations: solveOptions.maxIterations * 2 ** round,
+    });
+    applyAngles(solved.angles);
+    if (solved.report.maxPositionError > previousError * POLISH_PROGRESS_FACTOR) break;
+  }
+
+  const loopReport: LoopClosureReport | null = solved.report.loopCount > 0 ? solved.report : null;
 
   return {
     assembly,

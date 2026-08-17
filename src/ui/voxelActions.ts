@@ -10,7 +10,7 @@
  */
 import type { VoxelCoord, VoxelId } from '../types/voxel';
 import { coordKey, voxelPaths, voxelConnectedComponents, voxelWorldCenter } from '../kinematics/voxelGraph';
-import { buildFittedChain, computeChainStartPoseFromStroke, computeFeasibility, strokeArcLength } from '../kinematics/curveFit';
+import { buildFittedChain, computeChainStartPoseFromStroke, idealModuleCount, strokeArcLength } from '../kinematics/curveFit';
 import { anchorKeyId, findWeldAnchor, type FittedChainRef } from '../kinematics/branchAnchor';
 import type { Stroke, FitResult } from '../types/draw';
 import type { Assembly, ConnectorEnd, ModuleId, Pose } from '../types/module';
@@ -215,7 +215,7 @@ export function computeVoxelConversionPreview(
 
     const stroke: Stroke = { id: pathKey, points };
     const length = strokeArcLength(points.map((p) => new Vector3(...p)));
-    const moduleCount = Math.max(1, computeFeasibility(length, 0).modulesNeeded);
+    const moduleCount = idealModuleCount(length, points.length);
 
     const { assembly, fitResult } = buildFittedChain(
       stroke,

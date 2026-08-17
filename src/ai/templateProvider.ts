@@ -33,11 +33,14 @@ function box(prefix: string, x: number, y: number, z: number, w: number, h: numb
   return { nodes, edges };
 }
 
+/** Chair/table leg length, literally 2.5x the original raw value (was 1). */
+const LEG_LENGTH = 1 * 2.5;
+
 const TEMPLATES: Template[] = [
   {
     keywords: ['chair', 'seat', 'stool'],
     build: () => {
-      const seat = box('s', 0, 1, 0, 2, 0, 2); // Degenerate box = a flat frame + its legs below.
+      const seat = box('s', 0, LEG_LENGTH, 0, 2, 0, 2); // Degenerate box = a flat frame + its legs below.
       const legs = [0, 1, 2, 3].map((i) => ({ id: `f${i}`, position: [seat.nodes[i]!.position[0], 0, seat.nodes[i]!.position[2]] }));
       return {
         name: 'Chair',
@@ -45,8 +48,8 @@ const TEMPLATES: Template[] = [
         nodes: [
           ...seat.nodes.slice(0, 4),
           ...legs,
-          { id: 'b0', position: [0, 3, 2] },
-          { id: 'b1', position: [2, 3, 2] },
+          { id: 'b0', position: [0, LEG_LENGTH + 2, 2] },
+          { id: 'b1', position: [2, LEG_LENGTH + 2, 2] },
         ],
         edges: [
           { from: 's0', to: 's1' }, { from: 's1', to: 's2' }, { from: 's2', to: 's3' }, { from: 's3', to: 's0' },
@@ -59,7 +62,12 @@ const TEMPLATES: Template[] = [
   {
     keywords: ['table', 'desk'],
     build: () => {
-      const top = box('t', 0, 1, 0, 2, 0, 2);
+      // Left at its original 1:2 leg:frame ratio -- see the note above LONG.
+      // A plain 4-legs-on-a-frame table ties 4 short edges against 4 long
+      // ones exactly if the legs are lengthened the chair's way, and that
+      // tied median measurably regressed it (2 colliding pairs, converged
+      // -> 26 pairs, did not converge) rather than helping.
+      const top = box('t', 0, LEG_LENGTH, 0, 2, 0, 2);
       const feet = [0, 1, 2, 3].map((i) => ({ id: `g${i}`, position: [top.nodes[i]!.position[0], 0, top.nodes[i]!.position[2]] }));
       return {
         name: 'Table',

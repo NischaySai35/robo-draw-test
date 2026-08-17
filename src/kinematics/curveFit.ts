@@ -173,6 +173,49 @@ export function computeFeasibility(strokeLength: number, modulesAvailable: numbe
   };
 }
 
+/**
+ * How many modules to actually FIT a chain with -- a different question from
+ * `computeFeasibility`'s "how many do you need to GUARANTEE enough reach",
+ * which exists for Draw-to-Build's assigned/deficit messaging and always
+ * rounds up on purpose (telling a user they have enough reach when they
+ * don't would be worse than the reverse).
+ *
+ * Building always rounded up too, until this was split out, and that was a
+ * real bug: a target only slightly longer than N modules' reach (say 1.07x)
+ * got built with N+1 modules instead -- reach the target never needed, which
+ * `walkChain`'s pursuit tracking does not fold back onto the endpoint once
+ * it runs out of real path to aim at. Measured on a single straight edge
+ * 1.066x one module's reach: N+1 modules landed 1.32 world units past the
+ * endpoint, 0.82 of that sideways off the line entirely -- on the simplest
+ * possible case, no branches, no loops.
+ *
+ * Picking whichever of floor/ceil has reach closer to the target avoids
+ * that: undershooting by a small amount is a small, predictable gap at the
+ * tip (pure pursuit has real stroke to aim at for the whole chain, so it
+ * tracks the line cleanly and just runs out slightly short); overshooting
+ * is the erratic, unbounded case above. Floor is never chosen below 1.
+ *
+ * This is only safe for a truly STRAIGHT run -- `pointCount <= 2`. A merged
+ * path with interior corners (skeletonPaths joins a degree-2 chain of
+ * skeleton nodes into one path by topology alone, with no check that they're
+ * actually collinear -- a bend counts as "straight-through" too) needs
+ * roughly one module per corner just to have any chance of tracking the
+ * shape, regardless of how close its RAW arc length sits to a lower
+ * multiple. Rounding a 3-corner, 2.4x-reach path down to 2 modules purely
+ * because 2.4 is nearer to 2 than to 3 asks 2 modules to bend around 3
+ * corners, which isn't a reach problem to trade off -- it can't be done at
+ * all, and loop closure simply fails to converge. Anything but a bare
+ * 2-point stroke keeps the original guaranteed-capacity ceil.
+ */
+export function idealModuleCount(strokeLength: number, pointCount = 2): number {
+  const floor = Math.max(1, Math.floor(strokeLength / MODULE_CHAIN_LENGTH));
+  const ceil = Math.max(1, Math.ceil(strokeLength / MODULE_CHAIN_LENGTH));
+  if (floor === ceil || pointCount > 2) return ceil;
+  const floorGap = Math.abs(strokeLength - floor * MODULE_CHAIN_LENGTH);
+  const ceilGap = Math.abs(strokeLength - ceil * MODULE_CHAIN_LENGTH);
+  return floorGap <= ceilGap ? floor : ceil;
+}
+
 /** Converts a chain-forward starting frame into connector A's `Module.basePose` (see `fitChainToStroke` docs). */
 export function chainStartPoseToBasePose(chainStartPose: Pose): Pose {
   return composePoses(chainStartPose, FLIP_X_180);

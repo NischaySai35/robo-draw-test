@@ -94,12 +94,25 @@ export function anchorKeyId(key: AnchorCandidateKey): string {
  * `consumed` holds the ids (see `anchorKeyId`) of connectors already claimed
  * by earlier arms at this or another branch -- a single connector can only
  * ever take one weld.
+ *
+ * `excludeModuleId` drops every connector on one module from the search. Pass
+ * the module that is about to weld, so it cannot be handed one of its OWN
+ * connectors: two connectors on the same module are parts of a single rigid
+ * body, so a weld between them cannot be satisfied by any joint angles at all
+ * -- it is a "loop" with a fixed, non-zero gap baked into the module's own
+ * geometry. Nothing downstream recovers from that. Loop closure stalls on its
+ * first iteration, reports the shape over-constrained when it is perfectly
+ * buildable, and (because it never converges) burns its entire iteration
+ * budget on every solve. A generated table hit exactly this: one module's UP
+ * side connector welded to its own B, an unclosable 1.77-unit gap that made
+ * the whole structure's fit meaningless.
  */
 export function findWeldAnchor(
   chains: readonly FittedChainRef[],
   branchCenter: Vector3,
   armDirection: Vector3,
   consumed: ReadonlySet<string>,
+  excludeModuleId?: ModuleId,
 ): WeldAnchor | null {
   const direction = armDirection.clone().normalize();
   let best: WeldAnchor | null = null;
@@ -109,6 +122,7 @@ export function findWeldAnchor(
     const modules = Object.values(chain.assembly.modules);
 
     modules.forEach((module, moduleIndex) => {
+      if (module.id === excludeModuleId) return;
       const moduleTransforms = transforms.get(module.id);
       if (!moduleTransforms) return;
 
